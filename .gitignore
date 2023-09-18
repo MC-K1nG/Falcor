@@ -25,7 +25,6 @@
 *.pyc
 *.VC.db
 *.VC.opendb
-*.pyc
 *slang-dump-*
 *.mp4
 *.tlog
