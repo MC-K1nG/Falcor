@@ -29,3 +29,5 @@
 *.mp4
 *.tlog
 *.bak
+
+.cache

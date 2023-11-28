@@ -50,7 +50,10 @@ Scheduler gScheduler;
 static const uint kRayTypeScatter = 0;
 static const uint kMissScatter = 0;
 
-struct DummyAttribs { uint dummy; };
+struct DummyAttribs
+{
+    uint dummy;
+};
 
 struct PathPayload
 {
@@ -58,8 +61,9 @@ struct PathPayload
 
     PackedHitInfo hit;
     GuideData guideData;
-    InteriorList interiorList;  ///< Interior list. Keeping track of a stack of materials with medium properties. The size depends on the config (4B/item).
-    SampleGenerator sg;         ///< Sample generator state. Typically 4-16B.
+    InteriorList interiorList; ///< Interior list. Keeping track of a stack of materials with medium properties. The size depends on the
+                               ///< config (4B/item).
+    SampleGenerator sg;        ///< Sample generator state. Typically 4-16B.
 
     static PathPayload pack(const PathState path)
     {
@@ -117,6 +121,7 @@ struct PathPayload
     }
 };
 
+//* This one doesn't account for fractional attenuation
 struct VisibilityQuery : PathTracer::IVisibilityQuery
 {
     bool traceVisibilityRay(const Ray ray)
@@ -124,7 +129,60 @@ struct VisibilityQuery : PathTracer::IVisibilityQuery
         SceneRayQuery<kUseAlphaTest> sceneRayQuery;
         return sceneRayQuery.traceVisibilityRay(ray, RAY_FLAG_NONE, 0xff);
     }
+
+    bool traceAttenuationRay(const Ray ray, out float3 tr)
+    {
+        bool visiable = traceVisibilityRay(ray);
+        tr = visiable ? float3(1.f) : float3(.0f);
+        return visiable;
+    }
 };
+
+struct TransmittanceQuery : PathTracer::IVisibilityQuery
+{
+    bool traceVisibilityRay(const Ray ray)
+    {
+        //! This function is deprecated
+        return false;
+    }
+
+    bool traceAttenuationRay(const Ray ray, out float3 tr)
+    {
+        SceneRayQuery<kUseAlphaTest> sceneRayQuery;
+        Ray attenuationRay = ray;
+
+        tr = float3(1.f);
+        while (true)
+        {
+            HitInfo info;
+            float hitT;
+            bool hit = sceneRayQuery.traceRay(attenuationRay, info, hitT, RAY_FLAG_NONE, 0xff);
+
+            if (!hit)
+                return true;
+
+            const uint materialID = gScene.getMaterialID(info.getInstanceID());
+            const MaterialHeader materialHeader = gScene.materials.getMaterialHeader(materialID);
+
+            if (materialHeader.getMaterialType() != MaterialType::Interface)
+            {
+                tr = float3(.0f);
+                return false;
+            }
+
+            // TODO compute tr of pathSegment
+            // tr *= tr(segment);
+            if (tr.x == .0f && tr.y == .0f && tr.z == .0f)
+            {
+                return false;
+            }
+
+            //* 1e-4f to avoid self-intersection
+            attenuationRay.origin += (hitT + 1e-4f) * attenuationRay.dir;
+            attenuationRay.tMax -= (hitT + 1e-4f);
+        }
+    }
+}
 
 /** Helper function to create a HitInfo from a HitObject.
  */
@@ -227,7 +285,8 @@ struct ReorderingScheduler
         PathState path = PathPayload::unpack(payload);
 
         gPathTracer.setupPathLogging(path);
-        VisibilityQuery vq;
+        //        VisibilityQuery vq;
+        TransmittanceQuery vq;
 #if defined(DELTA_REFLECTION_PASS)
         gPathTracer.handleDeltaReflectionHit(path);
 #elif defined(DELTA_TRANSMISSION_PASS)
@@ -308,6 +367,7 @@ struct ReorderingScheduler
 
             {
                 // Advance to next path vertex.
+                // TODO if not hit interface, increment the vertexIndex
                 path.incrementVertexIndex();
 
                 // Trace ray.
@@ -315,7 +375,16 @@ struct ReorderingScheduler
                 const Ray ray = path.getScatterRay();
                 payload = PathPayload::pack(path);
                 const uint rayFlags = kUseAlphaTest ? RAY_FLAG_NONE : RAY_FLAG_FORCE_OPAQUE;
-                hitObject = HitObject::TraceRay( gScene.rtAccel, rayFlags, 0xff /* instanceInclusionMask */, kRayTypeScatter /* hitIdx */, rayTypeCount, kMissScatter, ray.toRayDesc(), payload );
+                hitObject = HitObject::TraceRay(
+                    gScene.rtAccel,
+                    rayFlags,
+                    0xff /* instanceInclusionMask */,
+                    kRayTypeScatter /* hitIdx */,
+                    rayTypeCount,
+                    kMissScatter,
+                    ray.toRayDesc(),
+                    payload
+                );
                 path = PathPayload::unpack(payload);
 
                 if (hitObject.IsHit())
@@ -334,6 +403,9 @@ struct ReorderingScheduler
             const uint materialID = gScene.getMaterialID(path.hit.getInstanceID());
             const MaterialHeader materialHeader = gScene.materials.getMaterialHeader(materialID);
             uint coherenceHints = gPathTracer.getCoherenceHints(path, materialHeader.isDeltaSpecular(), materialHeader.isEmissive());
+
+            if (materialHeader.getMaterialType() == MaterialType::Interface)
+                path.decrementVertexIndex();
 
             // Reorder and invoke closest hit or miss shader.
             ReorderThread(hitObject, coherenceHints, 4);
@@ -370,7 +442,8 @@ struct ReorderingScheduler
             if (kSamplesPerPixel == 0)
             {
                 bool needReorder = WaveActiveAnyTrue(samplesRemaining == 0);
-                if (samplesRemaining == 0) break;
+                if (samplesRemaining == 0)
+                    break;
                 if (needReorder)
                 {
                     HitObject hitObject = HitObject::MakeNop();
@@ -382,7 +455,7 @@ struct ReorderingScheduler
 }
 
 /** Simple scheduler using a fullscreen raytracing dispatch.
-*/
+ */
 struct Scheduler
 {
     /** Handle a miss.
@@ -439,8 +512,18 @@ struct Scheduler
         const Ray ray = path.getScatterRay();
         PathPayload payload = PathPayload::pack(path);
         uint rayFlags = RAY_FLAG_NONE;
-        if (!kUseAlphaTest) rayFlags |= RAY_FLAG_FORCE_OPAQUE;
-        TraceRay(gScene.rtAccel, rayFlags, 0xff /* instanceInclusionMask */, kRayTypeScatter /* hitIdx */, rayTypeCount, kMissScatter /* missIdx */, ray.toRayDesc(), payload);
+        if (!kUseAlphaTest)
+            rayFlags |= RAY_FLAG_FORCE_OPAQUE;
+        TraceRay(
+            gScene.rtAccel,
+            rayFlags,
+            0xff /* instanceInclusionMask */,
+            kRayTypeScatter /* hitIdx */,
+            rayTypeCount,
+            kMissScatter /* missIdx */,
+            ray.toRayDesc(),
+            payload
+        );
 
         path = PathPayload::unpack(payload);
     }
@@ -512,7 +595,7 @@ struct Scheduler
 //
 
 [shader("miss")]
-void scatterMiss(inout PathPayload payload : SV_RayPayload)
+void scatterMiss(inout PathPayload payload: SV_RayPayload)
 {
     gScheduler.handleMiss(payload);
 }
@@ -522,19 +605,26 @@ void scatterMiss(inout PathPayload payload : SV_RayPayload)
 //
 
 [shader("anyhit")]
-void scatterTriangleAnyHit(inout PathPayload payload : SV_RayPayload, BuiltInTriangleIntersectionAttributes attribs : SV_IntersectionAttributes)
+void scatterTriangleAnyHit(
+    inout PathPayload payload: SV_RayPayload,
+    BuiltInTriangleIntersectionAttributes attribs: SV_IntersectionAttributes
+)
 {
 #if USE_ALPHA_TEST
     // Alpha test for non-opaque geometry.
     GeometryInstanceID instanceID = getGeometryInstanceID();
     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
     const uint materialID = gScene.getMaterialID(instanceID);
-    if (gScene.materials.alphaTest(v, materialID, 0.f)) IgnoreHit();
+    if (gScene.materials.alphaTest(v, materialID, 0.f))
+        IgnoreHit();
 #endif
 }
 
 [shader("closesthit")]
-void scatterTriangleClosestHit(inout PathPayload payload : SV_RayPayload, BuiltInTriangleIntersectionAttributes attribs : SV_IntersectionAttributes)
+void scatterTriangleClosestHit(
+    inout PathPayload payload: SV_RayPayload,
+    BuiltInTriangleIntersectionAttributes attribs: SV_IntersectionAttributes
+)
 {
 #if USE_SER
     gScheduler.handleHit(payload);
@@ -608,7 +698,6 @@ void scatterCurveClosestHit(inout PathPayload payload, CurveIntersector::Attribs
 #endif
 }
 
-
 //
 // Shader entry points for SDFGrid hit groups.
 //
@@ -647,7 +736,8 @@ void rayGen()
 {
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
-    if (all(pixel >= frameDim)) return;
+    if (all(pixel >= frameDim))
+        return;
 
     gScheduler.run(pixel);
 }
