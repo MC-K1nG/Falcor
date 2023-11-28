@@ -48,10 +48,21 @@ struct HomogeneousVolumeSampler
         {
             const float evalT = hasScattered ? t : surfaceT;
             const float3 Tr = exp(-sigmaT * evalT);
+            const float pdf = evalPdf(hasScattered, surfaceT);
+            return hasScattered ? Tr * sigmaS / pdf : Tr / pdf;
+        }
+
+        /** Evaluate the pdf of distance sampling based on whether a scattering event has happened or not.
+            \param[in] hasScattered True if a scattering has happened.
+            \param[in] surfaceT Distance to the surface if hasScattered == false.
+            \return Returns the pdf.
+        */
+        float evalPdf(const bool hasScattered, const float surfaceT)
+        {
+            const float evalT = hasScattered ? t : surfaceT;
             const float3 Trs = exp(-sigmaS * evalT);
             const float3 density = hasScattered ? Trs * sigmaS : Trs;
-            const float pdf = dot(channelProbs, density);
-            return hasScattered ? Tr * sigmaS / pdf : Tr / pdf;
+            return dot(channelProbs, density);
         }
     };
 

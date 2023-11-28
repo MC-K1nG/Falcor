@@ -772,6 +772,40 @@ struct PathTracer
         return true;
     }
 
+    /** Handle scattering events inside a volume.
+        \return True if a scattering event has occurred before the surface hit.
+    */
+    bool handleVolumeScattering(const ShadingData sd, inout PathState path, const VolumeProperties vp)
+    {
+        HomogeneousVolumeSampler::DistanceSample ds = {};
+        float surfaceT = length(sd.posW - path.origin);
+
+        // Try sampling a distance.
+        bool hasScattered = HomogeneousVolumeSampler.sampleDistance(vp, path.thp, path.sg, ds);
+        hasScattered &= ds.t > 0 && ds.t < surfaceT;
+
+        // This should be fine even when there's no scattering events.
+        updatePathThroughput(path, ds.evalThroughput(hasScattered, surfaceT));
+        path.pdf *= ds.evalPdf(hasScattered, surfaceT);
+
+        // Sample the phase function if has scattered.
+        if (hasScattered)
+        {
+            path.origin += path.dir * ds.t;
+            float3 wo = {};
+            float3 weight = {};
+            if (!vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg))
+            {
+                path.terminate();
+                return true;
+            }
+            path.dir = wo;
+            updatePathThroughput(path, weight);
+        }
+
+        return hasScattered;
+    }
+
     /** Apply russian roulette to terminate paths early.
         \param[in,out] path Path.
         \param[in] u Uniform random number in [0,1).
@@ -840,13 +874,13 @@ struct PathTracer
         // TODO: Decouple geometry from the material.
         const bool isCurvePolyTubeHit = isTriangleHit && isHairMaterial;
 
-        // Account for volume absorption.
+        // Account for volume scattering.
         if (!path.interiorList.isEmpty())
         {
             const uint materialID = path.interiorList.getTopMaterialID();
             let material = gScene.materials.getMaterial(materialID);
             let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
-            updatePathThroughput(path, HomogeneousVolumeSampler::evalTransmittance(vp, length(sd.posW - path.origin)));
+            if (handleVolumeScattering(sd, path, vp)) return;
         }
 
         // Reject false hits in nested dielectrics.
