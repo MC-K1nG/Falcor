@@ -1255,6 +1255,7 @@ struct PathTracer
             bool valid = vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg);
             path.dir = wo;
             updatePathThroughput(path, weight);
+            path.incrementBounces(BounceType::Diffuse);
 
             if (!valid)
             {
