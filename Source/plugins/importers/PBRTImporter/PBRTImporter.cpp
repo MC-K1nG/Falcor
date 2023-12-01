@@ -992,7 +992,6 @@ Falcor::ref<Falcor::Material> createMaterial(BuilderContext& ctx, const Material
     {
         // Nothing to do.
         pMaterial = InterfaceMaterial::create(ctx.builder.getDevice(), entity.name);
-        printf("AAAAA");
     }
     else if (type == "diffuse")
     {

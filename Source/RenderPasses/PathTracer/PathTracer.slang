@@ -804,6 +804,9 @@ struct PathTracer
         HomogeneousVolumeSampler::DistanceSample ds = {};
         float surfaceT = length(sd.posW - path.origin);
 
+        if (all(vp.sigmaA == .0f) && all(vp.sigmaS == .0f))
+            return false;
+
         // Try sampling a distance.
         bool hasScattered = HomogeneousVolumeSampler.sampleDistance(vp, path.thp, path.sg, ds);
         hasScattered &= ds.t > 0 && ds.t < surfaceT;
