@@ -1,9 +1,4 @@
 # Volumetric-dev
-
--  BUG ? HomogeneousVolumeSampler.slang : sampleDistance
-    
-    `const float t = -log(1.f - u) / sigmaS[channel];` here should be sigmaT ?
-
 - Optimization ? 
     
     seperate attenuationRay test into two steps

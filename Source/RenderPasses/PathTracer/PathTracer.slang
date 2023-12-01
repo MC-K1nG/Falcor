@@ -70,7 +70,7 @@ struct PathTracer
             \param[in] ray Ray.
             \return Returns true if the ray endpoints are mutually visible (i.e. tr is not all zeros).
         */
-        bool traceAttenuationRay(const Ray ray, out float3 tr);
+        bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr);
     };
 
     PathTracerParams params; ///< Runtime parameters.
@@ -816,15 +816,16 @@ struct PathTracer
         if (hasScattered)
         {
             path.origin += path.dir * ds.t;
-            float3 wo = {};
-            float3 weight = {};
-            if (!vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg))
-            {
-                path.terminate();
-                return true;
-            }
-            path.dir = wo;
-            updatePathThroughput(path, weight);
+
+            //            float3 wo = {};
+            //            float3 weight = {};
+            //            if (!vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg))
+            //            {
+            //                path.terminate();
+            //                return true;
+            //            }
+            //            path.dir = wo;
+            //            updatePathThroughput(path, weight);
         }
 
         return hasScattered;
@@ -898,13 +899,14 @@ struct PathTracer
         // TODO: Decouple geometry from the material.
         const bool isCurvePolyTubeHit = isTriangleHit && isHairMaterial;
 
+        bool volumeSampled = false;
         // Account for volume scattering.
         if (!path.interiorList.isEmpty())
         {
             const uint materialID = path.interiorList.getTopMaterialID();
             let material = gScene.materials.getMaterial(materialID);
             let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
-            // TODO Handle volumetric nee
+
             if (handleVolumeScattering(sd, path, vp))
                 return;
         }
@@ -914,6 +916,12 @@ struct PathTracer
         if (sd.mtl.getMaterialType() == MaterialType::Interface)
         {
             path.origin = sd.computeRayOrigin(false);
+            GeometryInstanceID geomID = path.hit.getInstanceID();
+            gScene.geometryInstances[geomID.index];
+
+            uint nestedPriority = sd.mtl.getNestedPriority();
+            path.interiorList.handleIntersection(sd.materialID, nestedPriority, sd.frontFacing);
+            //  TODO update interiorList
             return;
         }
 
@@ -945,8 +953,8 @@ struct PathTracer
         const bool isLightSamplable = path.isLightSamplable();
 
         // Add emitted radiance.
-        // The primary hit is always included, secondary hits only if emissive lights are enabled and the full light contribution hasn't
-        // been sampled elsewhere.
+        // The primary hit is always included, secondary hits only if emissive lights are enabled and the full light contribution
+        // hasn't been sampled elsewhere.
         bool computeEmissive = isPrimaryHit || kUseEmissiveLights && (!kUseNEE || kUseMIS || !path.isLightSampled() || !isLightSamplable);
 
         // With RTXDI enabled, we sample the full direct illumination contribution on the primary hit.
@@ -1078,10 +1086,8 @@ struct PathTracer
                     }
 
                     logTraceRay(PixelStatsRayType::Visibility);
-                    // TODO fractional visibility test should be performed
-                    //                    bool visible = vq.traceVisibilityRay(ray);
                     float3 tr = float3(1.f);
-                    bool visible = vq.traceAttenuationRay(ray, tr);
+                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
 
                     if (visible)
                         addToPathContribution(path, Lr * tr);
@@ -1151,6 +1157,223 @@ struct PathTracer
         if (!valid)
         {
             path.terminate();
+        }
+    }
+
+    /** Handle the case when a scatter ray hits a surface or a volume particle.
+        After handling the hit, a new scatter ray is generated or the path is terminated.
+        \param[in,out] path The path state.
+        \param[in,out] vq Visibility query.
+    */
+    void handleHitVol<VisibilityQuery : IVisibilityQuery>(inout PathState path, inout VisibilityQuery vq)
+    {
+        // Upon hit:
+        // - Load vertex/material data
+        // - Compute MIS weight if path.getVertexIndex() > 1 and emissive hit
+        // - Add emitted radiance
+        // - Sample light(s) using shadow rays
+        // - Sample scatter ray or terminate
+
+        const bool isPrimaryHit = path.getVertexIndex() == 1;
+        const HitType hitType = path.hit.getType();
+        const bool isTriangleHit = hitType == HitType::Triangle;
+
+        let lod = createTextureSampler(path, isPrimaryHit, isTriangleHit);
+
+        // Load sgadubf data
+        ShadingData sd = loadShadingData(path.hit, path.origin, path.dir, lod);
+
+        //* If current ray resides in volume, there might be a volume interaction
+        //* between path.origin and hitpoint
+        //* Here just sample possible volume interaction point
+        bool isVolumeInteraction = false;
+        if (!path.interiorList.isEmpty())
+        {
+            // TODO for gridVolume, vp is not enough, volumeID may prefered
+            const uint materialID = path.interiorList.getTopMaterialID();
+            let material = gScene.materials.getMaterial(materialID);
+            let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
+            //* This function only do distance sampling
+            isVolumeInteraction = handleVolumeScattering(sd, path, vp);
+        }
+
+        if (isVolumeInteraction)
+        {
+            // TODO handle volume interaction
+
+            uint diffuseBounces = path.getBounces(BounceType::Diffuse);
+            if (diffuseBounces > kMaxDiffuseBounces)
+            {
+                path.terminate();
+                return;
+            }
+
+            //* Apply nee
+            path.setLightSampled(false, false);
+            LightSample ls = {};
+            bool validSample = false;
+
+            PathVertex vertex = PathVertex(path.getVertexIndex(), path.origin, sd.faceN, false);
+            bool sampleUpperHemisphere = true;
+            bool sampleLowerHemisphere = true;
+
+            validSample = generateLightSample(vertex, sampleUpperHemisphere, sampleLowerHemisphere, path.sg, ls);
+            path.setLightSampled(sampleUpperHemisphere, sampleLowerHemisphere);
+
+            // TODO handle phase
+            if (validSample)
+            {
+                if (ls.lightType != (uint)LightType::Analytic)
+                {
+                    float scatterPdf = 0.25f / 3.14159265358979323846;
+                    ls.Li *= evalMIS(1, ls.pdf, 1, scatterPdf);
+                }
+
+                float3 phaseWeight = 0.25f / 3.14159265358979323846;
+                float3 Lr = phaseWeight * ls.Li;
+
+                if (any(Lr > .0f))
+                {
+                    Ray ray = ls.getVisibilityRay();
+                    float3 tr = float3(1.f);
+                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
+
+                    if (visible)
+                        addToPathContribution(path, Lr * tr);
+                }
+            }
+
+            const uint materialID = path.interiorList.getTopMaterialID();
+            let material = gScene.materials.getMaterial(materialID);
+            let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
+
+            float3 wo = {};
+            float3 weight = {};
+            bool valid = vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg);
+            path.dir = wo;
+            updatePathThroughput(path, weight);
+
+            if (!valid)
+            {
+                path.terminate();
+            }
+
+            return;
+        }
+        else
+        {
+            //* Just skip the interface hit
+            //* However, for mis, the true last vertex should be recorded
+            if (sd.mtl.getMaterialType() == MaterialType::Interface)
+            {
+                path.origin = sd.computeRayOrigin(false);
+                GeometryInstanceID geomID = path.hit.getInstanceID();
+                gScene.geometryInstances[geomID.index];
+
+                uint nestedPriority = sd.mtl.getNestedPriority();
+                path.interiorList.handleIntersection(sd.materialID, nestedPriority, sd.frontFacing);
+                return;
+            }
+
+            // Reject false hits in nested dielectrics.
+            if (!handleNestedDielectrics(sd, path))
+                return;
+
+            logPathVertex();
+
+            // Create BSDF instance and query its properties.
+            let hints = getMaterialInstanceHints(path.hit, isPrimaryHit);
+            const IMaterialInstance mi = gScene.materials.getMaterialInstance(sd, lod, hints);
+            BSDFProperties bsdfProperties = mi.getProperties(sd);
+
+            //* If hit emissive
+            if (any(bsdfProperties.emission > .0f))
+            {
+                float misw = 1.f;
+
+                if (!isPrimaryHit && path.isLightSamplable())
+                {
+                    //? Handle the path originated from a interface hit, the distance should be adjusted
+
+                    TriangleHit triangleHit = path.hit.getTriangleHit();
+                    TriangleLightHit hit;
+                    hit.triangleIndex = gScene.lightCollection.getTriangleIndex(triangleHit.instanceID, triangleHit.primitiveIndex);
+                    hit.posW = sd.posW;
+                    hit.normalW = sd.getOrientedFaceNormal();
+
+                    // Evaluate PDF at the hit, had it been generated with light sampling.
+                    // Emissive light samplers have an option to exclusively sample the upper hemisphere.
+                    bool upperHemisphere = path.isLightSampledUpper() && !path.isLightSampledLower();
+                    float lightPdf =
+
+                        getEmissiveSelectionProbability() * emissiveSampler.evalPdf(path.origin, path.normal, upperHemisphere, hit);
+
+                    // Compute MIS weight by combining this with BSDF sampling.
+                    // Note we can assume path.pdf > 0.f since we shouldn't have got here otherwise.
+                    misw = evalMIS(1, path.pdf, 1, lightPdf);
+                }
+
+                addToPathContribution(path, misw * bsdfProperties.emission);
+            }
+
+            //* Terminate path if reach maxBounces
+            if (hasFinishedSurfaceBounces(path))
+            {
+                path.terminate();
+                return;
+            }
+
+            path.origin = sd.computeRayOrigin();
+            const uint lobeTypes = mi.getLobeTypes(sd);
+            const bool isDelta = (lobeTypes & (uint)LobeType::NonDelta) == 0;
+
+            //* Apply nee
+            if (!isDelta)
+            {
+                path.setLightSampled(false, false);
+
+                LightSample ls = {};
+                bool validSample = false;
+
+                PathVertex vertex = PathVertex(path.getVertexIndex(), sd.posW, sd.faceN, sd.frontFacing);
+                bool sampleUpperHemisphere = (lobeTypes & (uint)LobeType::NonDeltaReflection) != 0;
+                bool sampleLowerHemisphere = (lobeTypes & (uint)LobeType::NonDeltaTransmission) != 0;
+
+                validSample = generateLightSample(vertex, sampleUpperHemisphere, sampleLowerHemisphere, path.sg, ls);
+                path.setLightSampled(sampleUpperHemisphere, sampleLowerHemisphere);
+
+                if (validSample)
+                {
+                    if (ls.lightType != (uint)LightType::Analytic)
+                    {
+                        float scatterPdf = mi.evalPdf(sd, ls.dir, true);
+                        ls.Li *= evalMIS(1, ls.pdf, 1, scatterPdf);
+                    }
+
+                    float3 bsdfWeight = mi.eval(sd, ls.dir, path.sg);
+                    float3 Lr = bsdfWeight * ls.Li;
+
+                    //* Visibility test
+                    if (any(Lr > .0f))
+                    {
+                        Ray ray = ls.getVisibilityRay();
+                        float3 tr = float3(1.f);
+                        bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
+
+                        if (visible)
+                            addToPathContribution(path, Lr * tr);
+                    }
+                }
+            }
+
+            bool valid = generateScatterRay(sd, mi, path);
+            const bool isLastVertex = hasFinishedSurfaceBounces(path);
+
+            if (isLastVertex)
+                valid = false;
+
+            if (!valid)
+                path.terminate();
         }
     }
 

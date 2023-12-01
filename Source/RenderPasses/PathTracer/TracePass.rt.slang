@@ -39,7 +39,9 @@ import PathTracerNRD;
 
 import Utils.NVAPI; // TODO(@skallweit) this is currently needed to make g_NvidiaExt visible
 
+import Rendering.Volumes.HomogeneousVolumeSampler;
 ParameterBlock<PathTracer> gPathTracer;
+
 #if USE_SER
 ReorderingScheduler gScheduler;
 #else
@@ -130,7 +132,7 @@ struct VisibilityQuery : PathTracer::IVisibilityQuery
         return sceneRayQuery.traceVisibilityRay(ray, RAY_FLAG_NONE, 0xff);
     }
 
-    bool traceAttenuationRay(const Ray ray, out float3 tr)
+    bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr)
     {
         bool visiable = traceVisibilityRay(ray);
         tr = visiable ? float3(1.f) : float3(.0f);
@@ -146,10 +148,12 @@ struct TransmittanceQuery : PathTracer::IVisibilityQuery
         return false;
     }
 
-    bool traceAttenuationRay(const Ray ray, out float3 tr)
+    bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr)
     {
         SceneRayQuery<kUseAlphaTest> sceneRayQuery;
         Ray attenuationRay = ray;
+
+        InteriorList mediumList = list;
 
         tr = float3(1.f);
         while (true)
@@ -170,8 +174,22 @@ struct TransmittanceQuery : PathTracer::IVisibilityQuery
                 return false;
             }
 
-            // TODO compute tr of pathSegment
-            // tr *= tr(segment);
+            //* compute tr of pathSegment
+            if (!mediumList.isEmpty())
+            {
+                const uint id = mediumList.getTopMaterialID();
+                let material = gScene.materials.getMaterial(id);
+                let vp = material.getHomogeneousVolumeProperties(gScene.materials, id);
+
+                tr *= HomogeneousVolumeSampler::evalTransmittance(vp, hitT);
+            }
+
+            //* update interiorList
+            uint nestedPriority = materialHeader.getNestedPriority();
+            VertexData data = gScene.getVertexData(info.getTriangleHit());
+            bool entering = dot(data.faceNormalW, attenuationRay.dir) < .0f;
+            mediumList.handleIntersection(materialID, nestedPriority, entering);
+
             if (tr.x == .0f && tr.y == .0f && tr.z == .0f)
             {
                 return false;
@@ -285,14 +303,13 @@ struct ReorderingScheduler
         PathState path = PathPayload::unpack(payload);
 
         gPathTracer.setupPathLogging(path);
-        //        VisibilityQuery vq;
-        TransmittanceQuery vq;
 #if defined(DELTA_REFLECTION_PASS)
         gPathTracer.handleDeltaReflectionHit(path);
 #elif defined(DELTA_TRANSMISSION_PASS)
         gPathTracer.handleDeltaTransmissionHit(path);
 #else
-        gPathTracer.handleHit(path, vq);
+        TransmittanceQuery vq;
+        gPathTracer.handleHitVol(path, vq);
 #endif
 
         payload = PathPayload::pack(path);
@@ -493,6 +510,7 @@ struct Scheduler
 #else
         VisibilityQuery vq;
         gPathTracer.handleHit(path, vq);
+        path.terminate();
 #endif
 
         payload = PathPayload::pack(path);
