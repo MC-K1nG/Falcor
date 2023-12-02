@@ -40,6 +40,7 @@ import PathTracerNRD;
 import Utils.NVAPI; // TODO(@skallweit) this is currently needed to make g_NvidiaExt visible
 
 import Rendering.Volumes.HomogeneousVolumeSampler;
+import Rendering.Volumes.GridVolumeSampler;
 ParameterBlock<PathTracer> gPathTracer;
 
 #if USE_SER
@@ -132,7 +133,7 @@ struct VisibilityQuery : PathTracer::IVisibilityQuery
         return sceneRayQuery.traceVisibilityRay(ray, RAY_FLAG_NONE, 0xff);
     }
 
-    bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr)
+    bool traceAttenuationRay<S : ISampleGenerator>(const Ray ray, const InteriorList list, inout S sg, out float3 tr)
     {
         bool visiable = traceVisibilityRay(ray);
         tr = visiable ? float3(1.f) : float3(.0f);
@@ -148,7 +149,7 @@ struct TransmittanceQuery : PathTracer::IVisibilityQuery
         return false;
     }
 
-    bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr)
+    bool traceAttenuationRay<S : ISampleGenerator>(const Ray ray, const InteriorList list, inout S sg, out float3 tr)
     {
         SceneRayQuery<kUseAlphaTest> sceneRayQuery;
         Ray attenuationRay = ray;
@@ -180,8 +181,18 @@ struct TransmittanceQuery : PathTracer::IVisibilityQuery
                 const uint id = mediumList.getTopMaterialID();
                 let material = gScene.materials.getMaterial(id);
                 let vp = material.getHomogeneousVolumeProperties(gScene.materials, id);
+                let vf = material.getVolumeInfo(gScene.materials, materialID);
 
-                tr *= HomogeneousVolumeSampler::evalTransmittance(vp, hitT);
+                if (vf.gridIndex == -1)
+                {
+                    tr *= HomogeneousVolumeSampler::evalTransmittance(vp, hitT);
+                }
+                else
+                {
+                    // TODO evalTransmittance should provide a maxT parameter
+                    GridVolumeSampler gridSampler;
+                    tr *= gridSampler.evalTransmittance(attenuationRay, sg);
+                }
             }
 
             //* update interiorList

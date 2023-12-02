@@ -32,6 +32,13 @@ public:
     SerializedMaterialParams serializeParams() const override;
 
     void deserializeParams(const SerializedMaterialParams& params) override;
+
+    int getVolumeID() const;
+
+    void setVolumeID(int volumeID);
+
+protected:
+    int m_volumeID;
 };
 
 }; // namespace Falcor

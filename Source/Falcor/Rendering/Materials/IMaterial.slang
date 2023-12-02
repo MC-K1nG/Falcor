@@ -32,6 +32,15 @@ __exported import Scene.Material.VolumeProperties;
 import Rendering.Volumes.PhaseFunction;
 __exported import Scene.ShadingData;
 
+struct VolumeInfo
+{
+    int gridIndex; ///< -1 represents the volume is homogeneous
+
+    float3 sigmaA;
+    float3 sigmaS;
+    IPhaseFunction phaseFunction;
+};
+
 /** Interface for materials.
 
     Implementations of this interface hold all data describing the material properties.
@@ -63,17 +72,33 @@ interface IMaterial
         \param[in] hints Optional hints to control the behavior of the material instance. Combination of `MaterialInstanceHints` flags.
         \return MaterialInstance implementing the `IMaterialInstance` interface.
     */
-    MaterialInstance setupMaterialInstance(const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints = (uint)MaterialInstanceHints::None);
+    MaterialInstance setupMaterialInstance(
+        const MaterialSystem ms,
+        const ShadingData sd,
+        const ITextureSampler lod,
+        const uint hints = (uint)MaterialInstanceHints::None
+    );
 
     /** A differentiable version of `setupMaterialInstance`.
         This operation returns an additional `DiffMaterialData` structure that contains differentiable parameters.
     */
     [Differentiable]
-    MaterialInstance setupDiffMaterialInstance(out DiffMaterialData diffData, const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints = (uint)MaterialInstanceHints::None);
+    MaterialInstance setupDiffMaterialInstance(
+        out DiffMaterialData diffData,
+        const MaterialSystem ms,
+        const ShadingData sd,
+        const ITextureSampler lod,
+        const uint hints = (uint)MaterialInstanceHints::None
+    );
 
     /** Returns volume properties that are homogeneous for the whole volume (do not depend on the hitpoint).
      */
     VolumeProperties getHomogeneousVolumeProperties(const MaterialSystem ms, const uint materialID);
+
+    /** Returns volumeID
+     */
+
+    VolumeInfo getVolumeInfo(const MaterialSystem ms, const uint materialID);
 }
 
 [open]
@@ -89,5 +114,27 @@ struct MaterialBase
             return { md.volumeAbsorption, md.volumeScattering, HenyeyGreensteinPhaseFunction(md.volumeAnisotropy) };
         }
         return { float3(0.f), float3(0.f), NullPhaseFunction() };
+    }
+
+    VolumeInfo getVolumeInfo(const MaterialSystem ms, const uint materialID)
+    {
+        if (header.isBasicMaterial())
+        {
+            const BasicMaterialData md = ms.getBasicMaterialData(materialID);
+
+            if (md.volumeID != -1)
+            {
+                //* This material contains a grid volume
+                return { md.volumeID, md.volumeAbsorption, md.volumeScattering, HenyeyGreensteinPhaseFunction(md.volumeAnisotropy) };
+            }
+            else
+            {
+                //* This material contains a homogeneous volume
+                return { -1, md.volumeAbsorption, md.volumeScattering, HenyeyGreensteinPhaseFunction(md.volumeAnisotropy) };
+            }
+        }
+
+        else
+            return { -1, float3(0.f), float3(0.f), NullPhaseFunction() };
     }
 }

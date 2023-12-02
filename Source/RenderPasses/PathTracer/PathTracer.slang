@@ -32,6 +32,7 @@ import Rendering.Lights.LightHelpers;
 import Rendering.Materials.IsotropicGGX;
 import Rendering.Materials.InteriorListHelpers;
 import Rendering.Volumes.HomogeneousVolumeSampler;
+import Rendering.Volumes.GridVolumeSampler;
 import Rendering.Utils.PixelStats;
 import Rendering.RTXDI.RTXDI;
 import RenderPasses.Shared.Denoising.NRDConstants;
@@ -70,7 +71,7 @@ struct PathTracer
             \param[in] ray Ray.
             \return Returns true if the ray endpoints are mutually visible (i.e. tr is not all zeros).
         */
-        bool traceAttenuationRay(const Ray ray, const InteriorList list, out float3 tr);
+        bool traceAttenuationRay<S : ISampleGenerator>(const Ray ray, const InteriorList list, inout S sg, out float3 tr);
     };
 
     PathTracerParams params; ///< Runtime parameters.
@@ -799,36 +800,44 @@ struct PathTracer
     /** Handle scattering events inside a volume.
         \return True if a scattering event has occurred before the surface hit.
     */
-    bool handleVolumeScattering(const ShadingData sd, inout PathState path, const VolumeProperties vp)
+    bool handleVolumeScattering(const ShadingData sd, inout PathState path, const VolumeInfo vf)
     {
-        HomogeneousVolumeSampler::DistanceSample ds = {};
         float surfaceT = length(sd.posW - path.origin);
+        bool hasScattered = false;
 
-        if (all(vp.sigmaA == .0f) && all(vp.sigmaS == .0f))
-            return false;
-
-        // Try sampling a distance.
-        bool hasScattered = HomogeneousVolumeSampler.sampleDistance(vp, path.thp, path.sg, ds);
-        hasScattered &= ds.t > 0 && ds.t < surfaceT;
-
-        // This should be fine even when there's no scattering events.
-        updatePathThroughput(path, ds.evalThroughput(hasScattered, surfaceT));
-        path.pdf *= ds.evalPdf(hasScattered, surfaceT);
-
-        // Sample the phase function if has scattered.
-        if (hasScattered)
+        if (vf.gridIndex == -1)
         {
-            path.origin += path.dir * ds.t;
+            //* Sample a homogeneous volume
+            HomogeneousVolumeSampler::DistanceSample ds = {};
+            if (all(vf.sigmaA == .0f) && all(vf.sigmaS == .0f))
+                return false;
 
-            //            float3 wo = {};
-            //            float3 weight = {};
-            //            if (!vp.phaseFunction.sample(-path.dir, wo, path.pdf, weight, path.sg))
-            //            {
-            //                path.terminate();
-            //                return true;
-            //            }
-            //            path.dir = wo;
-            //            updatePathThroughput(path, weight);
+            VolumeProperties vp = { vf.sigmaA, vf.sigmaS, vf.phaseFunction };
+            HomogeneousVolumeSampler.sampleDistance(vp, path.thp, path.sg, ds);
+            hasScattered = (ds.t > 0 && ds.t < surfaceT);
+            // This should be fine even when there's no scattering events.
+            updatePathThroughput(path, ds.evalThroughput(hasScattered, surfaceT));
+            path.pdf *= ds.evalPdf(hasScattered, surfaceT);
+
+            if (hasScattered)
+                path.origin += path.dir * ds.t;
+        }
+        else
+        {
+            //* Sample a grid volume
+            GridVolumeSampler::DistanceSample ds = {};
+
+            Ray ray;
+            ray.origin = path.origin;
+            ray.dir = path.dir;
+            ray.tMin = .0f;
+            ray.tMax = surfaceT;
+            GridVolumeSampler distanceSampler;
+            hasScattered = distanceSampler.sampleDistance(ray, path.sg, ds);
+            updatePathThroughput(path, ds.thp);
+
+            if (hasScattered)
+                path.origin += path.dir * ds.t;
         }
 
         return hasScattered;
@@ -1090,7 +1099,7 @@ struct PathTracer
 
                     logTraceRay(PixelStatsRayType::Visibility);
                     float3 tr = float3(1.f);
-                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
+                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, path.sg, tr);
 
                     if (visible)
                         addToPathContribution(path, Lr * tr);
@@ -1195,9 +1204,10 @@ struct PathTracer
             // TODO for gridVolume, vp is not enough, volumeID may prefered
             const uint materialID = path.interiorList.getTopMaterialID();
             let material = gScene.materials.getMaterial(materialID);
-            let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
+            let vf = material.getVolumeInfo(gScene.materials, materialID);
+
             //* This function only do distance sampling
-            isVolumeInteraction = handleVolumeScattering(sd, path, vp);
+            isVolumeInteraction = handleVolumeScattering(sd, path, vf);
         }
 
         if (isVolumeInteraction)
@@ -1223,7 +1233,6 @@ struct PathTracer
             validSample = generateLightSample(vertex, sampleUpperHemisphere, sampleLowerHemisphere, path.sg, ls);
             path.setLightSampled(sampleUpperHemisphere, sampleLowerHemisphere);
 
-            // TODO handle phase
             if (validSample)
             {
                 if (ls.lightType != (uint)LightType::Analytic)
@@ -1239,13 +1248,14 @@ struct PathTracer
                 {
                     Ray ray = ls.getVisibilityRay();
                     float3 tr = float3(1.f);
-                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
+                    bool visible = vq.traceAttenuationRay(ray, path.interiorList, path.sg, tr);
 
                     if (visible)
                         addToPathContribution(path, Lr * tr);
                 }
             }
 
+            // TODO fix the api
             const uint materialID = path.interiorList.getTopMaterialID();
             let material = gScene.materials.getMaterial(materialID);
             let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
@@ -1362,7 +1372,7 @@ struct PathTracer
                     {
                         Ray ray = ls.getVisibilityRay();
                         float3 tr = float3(1.f);
-                        bool visible = vq.traceAttenuationRay(ray, path.interiorList, tr);
+                        bool visible = vq.traceAttenuationRay(ray, path.interiorList, path.sg, tr);
 
                         if (visible)
                             addToPathContribution(path, Lr * tr);

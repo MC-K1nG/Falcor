@@ -36,6 +36,10 @@ import Utils.Sampling.TinyUniformSampleGenerator;
 import Rendering.Utils.PixelStats;
 import GridVolumeSamplerParams;
 
+#define GRID_VOLUME_SAMPLER_TRANSMITTANCE_ESTIMATOR 0
+#define GRID_VOLUME_SAMPLER_DISTANCE_SAMPLER 0
+#define GRID_VOLUME_SAMPLER_USE_BRICKEDGRID 0
+
 #ifndef GRID_VOLUME_SAMPLER_TRANSMITTANCE_ESTIMATOR
 // GRID_VOLUME_SAMPLER_TRANSMITTANCE_ESTIMATOR must be defined in order to use this module.
 #error "GRID_VOLUME_SAMPLER_TRANSMITTANCE_ESTIMATOR not defined!"
@@ -66,7 +70,6 @@ struct GridVolumeSampler
     static const float kDDAMipUpSpeed = 0.33f;
     static const float kDDAMipDownSpeed = 2.f;
 
-
     /** Transform a ray from world space to grid index space.
         \param[in] gridVolume Grid volume object that stores the transform matrix we need.
         \param[in] densityGrid Grid object that stores the index space bounding box with which we need to offset coordinates, when using BrickedGrid.
@@ -75,7 +78,15 @@ struct GridVolumeSampler
         \param[out] rayOriginIndex Ray origin in index space.
         \param[out] rayDirIndex Ray direction in index space (non-normalized!).
     */
-    void transformRayToIndexSpace(const GridVolume gridVolume, const Grid densityGrid, const float3 rayOriginWorld, const float3 rayDirWorld, out float3 rayOriginIndex, out float3 rayDirIndex) {
+    void transformRayToIndexSpace(
+        const GridVolume gridVolume,
+        const Grid densityGrid,
+        const float3 rayOriginWorld,
+        const float3 rayDirWorld,
+        out float3 rayOriginIndex,
+        out float3 rayDirIndex
+    )
+    {
         rayOriginIndex = mul(gridVolume.data.invTransform, float4(rayOriginWorld, 1.f)).xyz;
         rayDirIndex = mul(gridVolume.data.invTransform, float4(rayDirWorld, 0.f)).xyz;
 #if GRID_VOLUME_SAMPLER_USE_BRICKEDGRID
@@ -95,8 +106,8 @@ struct GridVolumeSampler
     typedef Grid::Accessor DensityAccessor;
     DensityAccessor createAccessor(const Grid densityGrid) { return densityGrid.createAccessor(); }
     float getAccessorLevel(const DensityAccessor a) { return 0.f; }
-    void increaseAccessorLevel(inout DensityAccessor a) { }
-    void decreaseAccessorLevel(inout DensityAccessor a) { }
+    void increaseAccessorLevel(inout DensityAccessor a) {}
+    void decreaseAccessorLevel(inout DensityAccessor a) {}
 #endif
 
     struct DistanceSample
@@ -111,7 +122,8 @@ struct GridVolumeSampler
     */
     bool intersectsVolumes(const Ray ray)
     {
-        if (gScene.getGridVolumeCount() == 0) return false;
+        if (gScene.getGridVolumeCount() == 0)
+            return false;
         float2 nearFar;
         return intersectVolume(gScene.getGridVolume(0), ray, nearFar);
     }
@@ -138,13 +150,16 @@ struct GridVolumeSampler
     */
     float evalTransmittance<S : ISampleGenerator>(const Ray ray, inout S sg)
     {
-        if (gScene.getGridVolumeCount() == 0) return 1.f;
+        if (gScene.getGridVolumeCount() == 0)
+            return 1.f;
 
         GridVolume gridVolume = gScene.getGridVolume(0);
-        if (!gridVolume.hasDensityGrid()) return 1.f;
+        if (!gridVolume.hasDensityGrid())
+            return 1.f;
 
         float2 nearFar;
-        if (!intersectVolume(gridVolume, ray, nearFar)) return 1.f;
+        if (!intersectVolume(gridVolume, ray, nearFar))
+            return 1.f;
 
         TinyUniformSampleGenerator tsg = TinyUniformSampleGenerator(jenkinsHash(sg.next()));
 
@@ -171,13 +186,16 @@ struct GridVolumeSampler
     {
         ds = {};
 
-        if (gScene.getGridVolumeCount() == 0) return false;
-
+        if (gScene.getGridVolumeCount() == 0)
+            return false;
+        // TODO add grid index into it
         GridVolume gridVolume = gScene.getGridVolume(0);
-        if (!gridVolume.hasDensityGrid()) return false;
+        if (!gridVolume.hasDensityGrid())
+            return false;
 
         float2 nearFar;
-        if (!intersectVolume(gridVolume, ray, nearFar)) return false;
+        if (!intersectVolume(gridVolume, ray, nearFar))
+            return false;
 
         TinyUniformSampleGenerator tsg = TinyUniformSampleGenerator(jenkinsHash(sg.next()));
 
@@ -192,7 +210,13 @@ struct GridVolumeSampler
         }
     }
 
-    float lookupDensityIndex(const GridVolume gridVolume, const float3 ipos, const float3 u, const Grid densityGrid, inout DensityAccessor densityAccessor)
+    float lookupDensityIndex(
+        const GridVolume gridVolume,
+        const float3 ipos,
+        const float3 u,
+        const Grid densityGrid,
+        inout DensityAccessor densityAccessor
+    )
     {
         logVolumeLookup();
 #if GRID_VOLUME_SAMPLER_USE_BRICKEDGRID
@@ -212,7 +236,8 @@ struct GridVolumeSampler
         return nearFar.x < nearFar.y;
     }
 
-    float evalTransmittanceDeltaTracking<S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
+    float evalTransmittanceDeltaTracking<
+        S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
     {
         // Setup access to density grid.
         Grid densityGrid;
@@ -237,12 +262,14 @@ struct GridVolumeSampler
             const float d = lookupDensityIndex(gridVolume, ipos + t * idir, sampleNext3D(sg), densityGrid, densityAccessor);
 
             // Russian roulette.
-            if (sampleNext1D(sg) < d * invMajorant) return 0.f;
+            if (sampleNext1D(sg) < d * invMajorant)
+                return 0.f;
         }
         return 1.f;
     }
 
-    float evalTransmittanceRatioTracking<S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
+    float evalTransmittanceRatioTracking<
+        S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
     {
         // Setup access to density grid.
         Grid densityGrid;
@@ -271,17 +298,30 @@ struct GridVolumeSampler
             Tr *= max(0.f, 1.f - d * invMajorant);
             if (Tr < 0.1f)
             {
-                if (sampleNext1D(sg) >= Tr) return 0.f;
+                if (sampleNext1D(sg) >= Tr)
+                    return 0.f;
                 Tr = 1.f;
             }
         }
         return Tr;
     }
 
-    bool stepToNextCollision(const GridVolume gridVolume, const Grid densityGrid, const float3 ipos, const float3 idir, const float3 ri,
-                             float tauToGo, inout float t, const float tFar, bool adaptive, out float majorant, inout DensityAccessor accessor)
+    bool stepToNextCollision(
+        const GridVolume gridVolume,
+        const Grid densityGrid,
+        const float3 ipos,
+        const float3 idir,
+        const float3 ri,
+        float tauToGo,
+        inout float t,
+        const float tFar,
+        bool adaptive,
+        out float majorant,
+        inout DensityAccessor accessor
+    )
     {
-        // Warning: Changing the mip level based on 'tauToGo' below could potentially introduce bias, although it would not seem to be visible in practice.
+        // Warning: Changing the mip level based on 'tauToGo' below could potentially introduce bias, although it would not seem to be
+        // visible in practice.
         while (t < tFar)
         {
             // Core DDA step.
@@ -295,17 +335,21 @@ struct GridVolumeSampler
             // Test for (tentative) collisions.
             const float dtau = dt * majorant;
             tauToGo -= dtau;
-            if (adaptive) increaseAccessorLevel(accessor);
-            if (tauToGo > 0.f) continue;
+            if (adaptive)
+                increaseAccessorLevel(accessor);
+            if (tauToGo > 0.f)
+                continue;
             // Revert to collision.
             t += dt * tauToGo / dtau;
-            if (adaptive) decreaseAccessorLevel(accessor);
+            if (adaptive)
+                decreaseAccessorLevel(accessor);
             return (t < tFar);
         }
         return false;
     }
 
-    float evalTransmittanceRatioTrackingLocalDDA<S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
+    float evalTransmittanceRatioTrackingLocalDDA<
+        S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg)
     {
         // Setup access to density grid.
         Grid densityGrid;
@@ -321,21 +365,29 @@ struct GridVolumeSampler
         while (1)
         {
             float tauToGo = -log(1.f - sampleNext1D(sg)), majorant;
-            if (!stepToNextCollision(gridVolume, densityGrid, ipos, idir, ri, tauToGo, t, nearFar.y, true, majorant, densityAccessor)) return Tr;
+            if (!stepToNextCollision(gridVolume, densityGrid, ipos, idir, ri, tauToGo, t, nearFar.y, true, majorant, densityAccessor))
+                return Tr;
             const float d = lookupDensityIndex(gridVolume, ipos + t * idir, sampleNext3D(sg), densityGrid, densityAccessor);
             Tr *= max(0.f, 1.f - d / majorant);
             // Russian roulette.
             if (Tr < 0.1f)
             {
-                if (sampleNext1D(sg) >= Tr) return 0.f;
+                if (sampleNext1D(sg) >= Tr)
+                    return 0.f;
                 Tr = 1.f;
             }
         }
         return Tr;
     }
 
-
-    bool sampleDistanceDeltaTracking<S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg, out DistanceSample ds)
+    bool sampleDistanceDeltaTracking<S : ISampleGenerator>(
+        const GridVolume gridVolume,
+        const float3 rayOrigin,
+        const float3 rayDir,
+        const float2 nearFar,
+        inout S sg,
+        out DistanceSample ds
+    )
     {
         ds = {};
 
@@ -367,7 +419,14 @@ struct GridVolumeSampler
         return false;
     }
 
-    bool sampleDistanceDeltaTrackingLocalDDA<S : ISampleGenerator>(const GridVolume gridVolume, const float3 rayOrigin, const float3 rayDir, const float2 nearFar, inout S sg, out DistanceSample ds)
+    bool sampleDistanceDeltaTrackingLocalDDA<S : ISampleGenerator>(
+        const GridVolume gridVolume,
+        const float3 rayOrigin,
+        const float3 rayDir,
+        const float2 nearFar,
+        inout S sg,
+        out DistanceSample ds
+    )
     {
         ds = {};
         ds.thp = 1.f;
@@ -386,9 +445,11 @@ struct GridVolumeSampler
         while (1)
         {
             float tauToGo = -log(1.f - sampleNext1D(sg)), majorant;
-            if (!stepToNextCollision(gridVolume, densityGrid, ipos, idir, ri, tauToGo, t, nearFar.y, true, majorant, densityAccessor)) return false;
+            if (!stepToNextCollision(gridVolume, densityGrid, ipos, idir, ri, tauToGo, t, nearFar.y, true, majorant, densityAccessor))
+                return false;
             // Classify collision as real or null.
-            if (sampleNext1D(sg) * majorant < lookupDensityIndex(gridVolume, ipos + t * idir, sampleNext3D(sg), densityGrid, densityAccessor))
+            if (sampleNext1D(sg) * majorant <
+                lookupDensityIndex(gridVolume, ipos + t * idir, sampleNext3D(sg), densityGrid, densityAccessor))
             {
                 // Real collision, terminate.
                 ds.t = t;

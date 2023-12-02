@@ -54,6 +54,16 @@ void InterfaceMaterial::deserializeParams(const SerializedMaterialParams& params
     InterfaceMaterialParamLayout::deserialize(this, params);
 }
 
+int InterfaceMaterial::getVolumeID() const
+{
+    return m_volumeID;
+}
+
+void InterfaceMaterial::setVolumeID(int volumeID)
+{
+    m_volumeID = volumeID;
+}
+
 FALCOR_SCRIPT_BINDING(InterfaceMaterial)
 {
     using namespace pybind11::literals;
