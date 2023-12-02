@@ -49,9 +49,9 @@ import Scene.Material.VolumeProperties;
 */
 struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
 {
-    ShadingFrame sf;       ///< Shading frame in world space.
-    StandardBSDFData data; ///< BSDF parameters.
-    float3 emission;       ///< Radiance emitted in the incident direction (wi).
+    ShadingFrame sf;            ///< Shading frame in world space.
+    StandardBSDFData data;      ///< BSDF parameters.
+    float3 emission;            ///< Radiance emitted in the incident direction (wi).
 
     __init(const ShadingFrame sf, const StandardBSDFData data, const float3 emission)
     {
@@ -65,8 +65,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         float3 wiLocal = sf.toLocal(sd.V);
         float3 woLocal = sf.toLocal(wo);
 
-        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo))
-            return float3(0.f);
+        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo)) return float3(0.f);
 
         StandardBSDF bsdf = StandardBSDF(wiLocal, sd.mtl, data);
 
@@ -79,8 +78,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         float3 wiLocal = diffData.sf.toLocal(sd.V);
         float3 woLocal = diffData.sf.toLocal(wo);
 
-        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo))
-            return float3(0.f);
+        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo)) return float3(0.f);
 
         StandardBSDFData dataAD = StandardBSDFData(diffData);
         StandardBSDF bsdfAD = StandardBSDF(wiLocal, sd.mtl, dataAD);
@@ -106,8 +104,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         }
         result.wo = sf.fromLocal(woLocal);
 
-        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, result.wo))
-            return false;
+        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, result.wo)) return false;
 
         return true;
     }
@@ -117,8 +114,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         float3 wiLocal = sf.toLocal(sd.V);
         float3 woLocal = sf.toLocal(wo);
 
-        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo))
-            return 0.f;
+        if (!isValidHemisphereReflectionOrTransmission(sd, sf, wiLocal, woLocal, wo)) return 0.f;
 
         if (!useImportanceSampling)
         {
@@ -153,15 +149,20 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         // Pass on our specular reflectance field unmodified.
         p.specularReflectance = data.specular;
 
-        if (data.diffuseTransmission > 0.f || data.specularTransmission > 0.f)
-            p.flags |= (uint)BSDFProperties::Flags::IsTransmissive;
+        if (data.diffuseTransmission > 0.f || data.specularTransmission > 0.f) p.flags |= (uint)BSDFProperties::Flags::IsTransmissive;
 
         return p;
     }
 
-    uint getLobeTypes(const ShadingData sd) { return StandardBSDF::getLobeTypes(data); }
+    uint getLobeTypes(const ShadingData sd)
+    {
+        return StandardBSDF::getLobeTypes(data);
+    }
 
-    bool hasVolumeProperties() { return data.hasEntryPointVolumeProperties; }
+    bool hasVolumeProperties()
+    {
+        return data.hasEntryPointVolumeProperties;
+    }
 
     VolumeProperties getVolumeProperties()
     {
@@ -171,8 +172,8 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
             // Convert color to sigmaA. See MxLayeredMaterialInstance fro details
             const float g = data.volumeAnsiotropy;
             const float3 c = data.diffuse;
-            const float3 s = 4.09712f + 4.20863f * c - sqrt(9.59217f + 41.6808f * c + 17.7126 * c * c);
-            const float3 alpha = (1.f - s * s) / (1.f - g * s * s);
+            const float3 s = 4.09712f + 4.20863f*c - sqrt(9.59217f + 41.6808f * c + 17.7126 * c * c);
+            const float3 alpha = (1.f - s*s) / (1.f - g * s*s);
 
             result.sigmaA = select(alpha > 0.f, (1.f - alpha) * (data.volumeScattering) / alpha, 0.f);
         }
@@ -182,6 +183,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         result.sigmaS = data.volumeScattering;
         result.phaseFunction = NullPhaseFunction(); // g is taken from the volume and set in InternalPathTracer
         return result;
+
     }
 
     // Additional functions
@@ -197,15 +199,7 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
         \param[in,out] sg Sample generator.
         \return True if a sample was generated, false otherwise.
     */
-    bool sampleReference<S : ISampleGenerator>(
-        const ShadingData sd,
-        const float3 wi,
-        out float3 wo,
-        out float pdf,
-        out float3 weight,
-        out uint lobeType,
-        inout S sg
-    )
+    bool sampleReference<S : ISampleGenerator>(const ShadingData sd, const float3 wi, out float3 wo, out float pdf, out float3 weight, out uint lobeType, inout S sg)
     {
         weight = {};
         lobeType = {};
@@ -221,13 +215,11 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
                 wo.z = -wo.z;
             }
             pdf *= 0.5f;
-            if (min(abs(wi.z), abs(wo.z)) < kMinCosTheta || pdf == 0.f)
-                return false;
+            if (min(abs(wi.z), abs(wo.z)) < kMinCosTheta || pdf == 0.f) return false;
         }
         else
         {
-            if (min(wi.z, wo.z) < kMinCosTheta || pdf == 0.f)
-                return false;
+            if (min(wi.z, wo.z) < kMinCosTheta || pdf == 0.f) return false;
         }
 
         StandardBSDF bsdf = StandardBSDF(wi, sd.mtl, data);
@@ -250,15 +242,14 @@ struct StandardMaterialInstance : MaterialInstanceBase, IMaterialInstance
 
         if (isTransmissive)
         {
-            if (min(abs(wi.z), abs(wo.z)) < kMinCosTheta)
-                return 0.f;
+            if (min(abs(wi.z), abs(wo.z)) < kMinCosTheta) return 0.f;
             return 0.5f * wo.z * M_1_PI; // pdf = 0.5 * cos(theta) / pi
         }
         else
         {
-            if (min(wi.z, wo.z) < kMinCosTheta)
-                return 0.f;
+            if (min(wi.z, wo.z) < kMinCosTheta) return 0.f;
             return wo.z * M_1_PI; // pdf = cos(theta) / pi
         }
     }
+
 };

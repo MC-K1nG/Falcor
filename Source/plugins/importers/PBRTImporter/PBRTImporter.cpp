@@ -82,13 +82,10 @@
 #include "Scene/Material/PBRT/PBRTCoatedConductorMaterial.h"
 #include "Scene/Material/PBRT/PBRTDielectricMaterial.h"
 #include "Scene/Material/PBRT/PBRTDiffuseTransmissionMaterial.h"
-#include "Scene/Material/InterfaceMaterial.h"
 #include "Scene/Curves/CurveTessellation.h"
 
 #include <pybind11/pybind11.h>
 
-#include <cstdio>
-#include <cstdlib>
 #include <unordered_map>
 
 namespace Falcor
@@ -991,7 +988,6 @@ Falcor::ref<Falcor::Material> createMaterial(BuilderContext& ctx, const Material
     else if (type == "interface")
     {
         // Nothing to do.
-        pMaterial = InterfaceMaterial::create(ctx.builder.getDevice(), entity.name);
     }
     else if (type == "diffuse")
     {
