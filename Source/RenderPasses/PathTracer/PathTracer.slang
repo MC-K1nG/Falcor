@@ -834,10 +834,12 @@ struct PathTracer
             ray.tMax = surfaceT;
             GridVolumeSampler distanceSampler;
             hasScattered = distanceSampler.sampleDistance(ray, path.sg, ds);
-            updatePathThroughput(path, ds.thp);
 
             if (hasScattered)
+            {
+                updatePathThroughput(path, ds.thp);
                 path.origin += path.dir * ds.t;
+            }
         }
 
         return hasScattered;
@@ -919,8 +921,8 @@ struct PathTracer
             let material = gScene.materials.getMaterial(materialID);
             let vp = material.getHomogeneousVolumeProperties(gScene.materials, materialID);
 
-            if (handleVolumeScattering(sd, path, vp))
-                return;
+            //            if (handleVolumeScattering(sd, path, vp))
+            //                return;
         }
 
         //* Just skip the interface hit
