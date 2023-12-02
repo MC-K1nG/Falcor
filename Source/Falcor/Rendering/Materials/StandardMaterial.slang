@@ -47,12 +47,7 @@ struct StandardMaterial : MaterialBase, IMaterial
     // Specify that the associated `BSDF` type is `StandardMaterialInstance`.
     typedef StandardMaterialInstance MaterialInstance;
 
-    StandardMaterialInstance setupMaterialInstance(
-        const MaterialSystem ms,
-        const ShadingData sd,
-        const ITextureSampler lod,
-        const uint hints
-    )
+    StandardMaterialInstance setupMaterialInstance(const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints)
     {
         SamplerState s = ms.getTextureSampler(header.getDefaultTextureSamplerID());
 
@@ -138,13 +133,7 @@ struct StandardMaterial : MaterialBase, IMaterial
     }
 
     [Differentiable]
-    StandardMaterialInstance setupDiffMaterialInstance(
-        out DiffMaterialData diffData,
-        const MaterialSystem ms,
-        const ShadingData sd,
-        const ITextureSampler lod,
-        const uint hints
-    )
+    StandardMaterialInstance setupDiffMaterialInstance(out DiffMaterialData diffData, const MaterialSystem ms, const ShadingData sd, const ITextureSampler lod, const uint hints)
     {
         SamplerState s = ms.getTextureSampler(header.getDefaultTextureSamplerID());
 

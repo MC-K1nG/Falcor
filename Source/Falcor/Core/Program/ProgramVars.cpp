@@ -35,7 +35,6 @@
 
 #include <slang.h>
 
-#include <cstdio>
 #include <set>
 
 namespace Falcor

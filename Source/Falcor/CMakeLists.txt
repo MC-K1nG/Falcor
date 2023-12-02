@@ -255,8 +255,6 @@ target_sources(Falcor PRIVATE
     Rendering/Materials/StandardMaterial.slang
     Rendering/Materials/TexLODHelpers.slang
     Rendering/Materials/TexLODTypes.slang
-    Rendering/Materials/InterfaceMaterialInstance.slang
-    Rendering/Materials/InterfaceMaterial.slang
 
     Rendering/Materials/PBRT/PBRTDiffuseMaterial.slang
     Rendering/Materials/PBRT/PBRTDiffuseMaterialInstance.slang
@@ -455,10 +453,6 @@ target_sources(Falcor PRIVATE
     Scene/Material/TextureHandle.slang
     Scene/Material/TextureSampler.slang
     Scene/Material/VolumeProperties.slang
-    Scene/Material/InterfaceMaterial.cpp
-    Scene/Material/InterfaceMaterial.h
-    Scene/Material/InterfaceMaterialParamLayout.slang
-
 
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.cpp
     Scene/Material/PBRT/PBRTCoatedConductorMaterial.h
